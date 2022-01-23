@@ -1,0 +1,508 @@
+---
+title: "**P3 | Solving real cases in genomics**<br><font color='#A8A8A8' size='5'>Which are the variants behind three common human diseases?</font>"
+author: "Current Topics in Bioinformatics"
+date: "21 January 2022"
+output:
+  html_document:
+    theme: yeti
+    css: https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.11.2/css/all.css
+    self_contained: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = "center", fig.width = 6, fig.height = 4)
+library(ggplot2)
+library(SNPassoc)
+library(snpStats)
+library(SNPRelate)
+library(dplyr)
+library(ggrepel)
+
+```
+The following packages are required:
+```{r packages, eval = FALSE}
+install.packages("ggplot2")
+install.packages("dplyr")
+install.packages("ggrepel")
+install.packages("devtools")
+devtools::install_github("isglobal-brge/SNPassoc")
+install.packages("BiocManager")
+BiocManager::install(c("snpStats", "SNPRelate"))
+
+```
+
+####GWAS colorectal cancer:
+
+```{r read-plink-data}
+# Read PLINK data of the colorectal dataset
+colorectal.plink <-  read.plink(bed = "dataCC/colorectal.bed",
+                             bim = "dataCC/colorectal.bim",
+                             fam = "dataCC/colorectal.fam")
+```
+
+```{r read-plink-info}
+names(colorectal.plink)
+```
+
+```{r genotypes}
+# Get genotypes information
+colorectal.genotype <- colorectal.plink$genotypes
+
+nrow(colorectal.genotype) #patients
+ncol(colorectal.genotype) #SNPs
+
+```
+
+```{r individuals}
+# Get individuals information (info familia)
+individualsCC <- colorectal.plink$fam
+head(individualsCC)
+```
+
+```{r annotation}
+# Get annotation information
+annotationCC <- colorectal.plink$map
+head(annotationCC)
+
+```
+
+```{r colorectal}
+colorectal.phenotype <- read.delim("dataCC/colorectal.txt")
+head(colorectal.phenotype)
+class(colorectal.phenotype)
+```
+```{r colorectal}
+###PROBLEMAS. Hay que ajustar los sujetos en el eje y, y ajustar los gráficos relación tamaño e información de los ejes. Eliminar columna de NA. Hace que age sea discreta según me fijo en el gráfico.
+
+#Gender / Subjects
+ggplot(data = colorectal.phenotype) + geom_col( mapping = aes(y=id, x=sex, fill = sex)) +  scale_fill_manual(values = c("#B28DFF","#FFB5E8")) + labs(y= "Subjects", x= "Gender", fill = "Gender") + theme_minimal() 
+
+#Smoking habits / Subjects
+ggplot(data = colorectal.phenotype) + geom_col( mapping = aes(y=id, x=smoke, fill = smoke)) +  scale_fill_manual(values = c("#faaba9","#fff1b5", "#dbf5eb")) + scale_y_continuous(name = "Subjects") + labs(x = "Smoking Habits")+ theme_minimal() +
+theme(legend.position="none",
+        axis.title = element_text(size = 16), axis.text = element_text(size = 14))
+
+#Age / Subjects
+ggplot(data = colorectal.phenotype) + geom_col( mapping = aes(y=id, x=age, fill = age)) + scale_y_continuous(name = "Subjects") + theme_minimal() 
+```
+
+```{r histograma per edats}
+
+edat_subjectes= ggplot(data = colorectal.phenotype, aes(x = age)) + labs (x= "Age", y= "Number of individuals")+
+  geom_histogram(binwidth = 5 ) + scale_x_continuous(breaks = c(25,30,35,40,45,50,55,60)) + #l'edat dels subjectes va d'entre 27 i 58 anys, separe l'histograma amb finestres de 5
+  theme_minimal() + 
+  theme(axis.title = element_text(size = 16), axis.text = element_text(size = 14))
+edat_subjectes
+```
+```{r prova2 edat i sexe}
+
+class(colorectal.phenotype$sex)
+class(colorectal.phenotype$age)
+
+colorectal.phenotype$sex_f <- factor(colorectal.phenotype$sex)
+
+colorectal.phenotype$Age <- factor(colorectal.phenotype$age)
+
+ggplot(data = colorectal.phenotype, mapping = aes(x = Age)) +
+  geom_bar()
+
+ggplot(data = colorectal.phenotype, mapping = aes(x = Age, fill = sex_f)) + scale_fill_manual(values = c("#D6E5FA", "#D9D7F1"), name = "Gender") +
+  scale_y_continuous(name = "Number of individuals") + 
+  theme_classic() +
+  geom_bar(position = "dodge") 
+
+```
+
+
+```{r rename-rownames}
+# Rename the rownames with the id
+rownames(colorectal.phenotype) <- colorectal.phenotype$id
+head(colorectal.phenotype)
+
+# We check if the rownames of the two objects are identical
+identical(rownames(colorectal.phenotype), rownames(colorectal.genotype))
+#Not necessary intersect fuction
+```
+
+QUALITY CONTROL
+### 2. Quality control of individuals
+```{r snps-info}
+
+info.snpsCC <- col.summary(colorectal.genotype)
+head(info.snpsCC)
+
+# Creamos un dataframe que recogerá la información del SNP que usaremos para filtrar, Call.rate, `MAF`,`z.HWE`.
+
+```
+
+
+```{r controls}
+# Controls are not colorectal subjects 
+controlsCC <- colorectal.phenotype$cascon == 0 & !is.na(colorectal.phenotype$cascon)
+colorectal.genotype.controls <- colorectal.genotype[controlsCC, ]
+info.controlsCC <- col.summary(colorectal.genotype.controls)
+
+nrow(colorectal.genotype.controls) #Numero de controles que se están usando
+
+casesCC <- colorectal.phenotype$cascon == 1 & !is.na(colorectal.phenotype$cascon)
+colorectal.genotype.cases <- colorectal.genotype[casesCC, ]
+info.casesCC <- col.summary(colorectal.genotype.cases)
+
+nrow(colorectal.genotype.cases) #Numero de sujetos "caso" que se están usando
+```
+```{r quality2}
+# Filter QC 
+use <- info.snpsCC$Call.rate > 0.95 &
+       info.snpsCC$MAF > 0.05 &
+       abs(info.controlsCC$z.HWE < 3.3) 
+
+# This is only possible if we have controls, otherwise, we use info.snps
+
+mask.snpsCC <- use & !is.na(use)
+
+genotype.qc.snpsCC <- colorectal.genotype[, mask.snpsCC]
+annotationCC <- annotationCC[mask.snpsCC, ]
+
+# Original SNPs
+colorectal.genotype
+# Filtered SNPs
+genotype.qc.snpsCC
+
+#Numero de SNPs que han quedado después de filtrar
+ncol(genotype.qc.snpsCC)
+```
+```{r snp-quality-report}
+
+# Number of SNPs removed (eliminados) for a bad call rate
+sum(info.snpsCC$Call.rate < 0.95, na.rm = TRUE)
+
+# Number of SNPs removed for low MAF
+sum(info.snpsCC$MAF < 0.05, na.rm = TRUE)
+
+# Number of SNPs removed that do not pass HWE
+sum(abs(info.controlsCC$z.HWE > 3.3), na.rm = TRUE)
+
+# The total number of SNPs removed for any reason
+sum(!mask.snpsCC)
+
+#From 100,000 SNPs, we keep:
+ncol(genotype.qc.snpsCC)
+```
+
+### 3. Quality control of individuals
+
+```{r info-ind}
+info.indvCC <- row.summary(genotype.qc.snpsCC)
+head(info.indvCC)
+```
+
+```{r sex-discr}
+#el sexo se puede inferir a través de la heterocigosidad y podemos hacer el ggplot a partir de ahí. Podemos hacer el punto 1 y 2 con los mismos datos (info.indvCC)
+
+# Sex discrepancies
+colorectal.genotype.X <- genotype.qc.snpsCC[,annotationCC$chromosome=="23" & !is.na(annotationCC$chromosome)]
+
+infoCC.X <- row.summary(colorectal.genotype.X)
+
+infoCC.X$sex <- colorectal.phenotype$sex 
+infoCC.X$id <- colorectal.phenotype$id 
+
+
+# Plot with ggplot2
+ggplot(infoCC.X, aes(y = Heterozygosity, x = id)) +
+  geom_point(aes(color= sex), alpha = 0.7) + 
+  labs(y = "Heterozygosity", x = "ID", color = "Gender") +
+  theme_minimal() + scale_color_manual(values = c("#FFE882", "#4DC4CC"))
+
+```
+
+```{r sex-discr2}
+#nos guardamos las discrepancias de sexo, para luego quitarlas.
+sex.discrepCC <- (infoCC.X$sex == "Male" &
+                infoCC.X$Heterozygosity > 0.2) |
+                (infoCC.X$sex=="Female" &
+                 infoCC.X$Heterozygosity < 0.2)
+
+
+memory.size() ### Checking your memory size
+memory.limit() ## Checking the set limit
+memory.limit(size=56000) ### expanding your memory _ here it goes beyond to your actually memory. This 56000 is proposed for 64Bit.
+
+```
+Now, we identify individuals with outlying heterozygosity from the overall genomic heterozigosity rate
+
+```{r bad-het}
+##Los altos niveles de heterocigosidad dentro de un individuo pueden ser una indicación de la baja calidad de la muestra, mientras que los bajos niveles de heterocigosidad pueden deberse a la endogamia.
+MAF.CC <- col.summary(genotype.qc.snpsCC)$MAF
+callmatrix.CC <- !is.na(genotype.qc.snpsCC)
+hetExp.CC <- callmatrix.CC %*% (2*MAF.CC*(1-MAF.CC))
+hetObs.CC <- with(info.indvCC,Heterozygosity*(ncol(genotype.qc.snpsCC))*Call.rate)
+info.indvCC$hetF <- 1 - (hetObs.CC/hetExp.CC)
+head(info.indvCC)
+
+
+```
+Individuals whose F-statistic is outside the band ±0.1 are considered sample outlyers and correspond to those having an heterozygosity rate lower than 0.32.
+
+```{r het-plot}
+ggplot(info.indvCC, aes(x = 1:nrow(info.indvCC), y = hetF)) +
+  geom_point(aes(color = hetF > 0.1)) +
+  geom_hline(yintercept = 0.1, linetype = "dashed") + 
+  labs(y = "F-Heterozygosity", x = "ID", color = "F-heterozigosity > 0.1") +
+  theme_minimal() + scale_color_manual(values = c("#4DC4CC", "#582602"))
+
+```
+##Relatednes
+```{r transform-data}
+#library(SNPRelate) #per si no ha carregat package, la carreguem
+snpgdsBED2GDS("dataCC/colorectal.bed",
+              "dataCC/colorectal.fam",
+              "dataCC/colorectal.bim",
+              out="colorectal.GDS"
+              )
+```
+
+```{r remove-data}
+# Open the file
+genofile.CC <- snpgdsOpen("colorectal.GDS")
+# Using a seed allows to reproduce the analysis
+set.seed(12345)
+snps.qc.CC <- colnames(genotype.qc.snpsCC)
+snp.prune.CC <- snpgdsLDpruning(genofile.CC,ld.threshold = 0.2, snp.id=snps.qc.CC)
+
+```
+
+IBD coefficients can be computed by using the method of moments that is implemented in the function `snpgdsIDMoM`. The result of the analysis is a table indicating kinship among pairs of individuals.
+
+```{r IBD}
+snps.ibd.CC <- unlist(snp.prune.CC, use.names=FALSE)
+ibd.CC <- snpgdsIBDMoM(genofile.CC, kinship = TRUE,
+                    snp.id = snps.ibd.CC,
+                    num.thread = 1)
+ibd.kin.CC <- snpgdsIBDSelection(ibd.CC)
+head(ibd.kin.CC)
+```
+
+Let us check whether there are individuals who are candidate to be removed due to relatednss. A pair of individuals with higher than expected relatedness are considered with kinship score > 0.1.
+
+```{r remove-indv}
+ibd.kin.thres.CC <- subset(ibd.kin.CC, kinship > 0.1)
+head(ibd.kin.thres.CC)
+
+
+```
+The ids of the individuals to be removed can be obtained by using a function that is called `related` and is available in the `SNPassoc` package:
+
+```{r }
+ids.rel.CC <- related(ibd.kin.thres.CC)
+ids.rel.CC
+```
+Summing up, individuals with more than 5% missing genotypes, with sex discrepancies, F-heterozigosity absolute value > 0.1 and kinship coefficient > 0.1 are removed from the genotype and phenotype data.
+
+```{r qc-ind}
+ use.CC <- info.indvCC$Call.rate > 0.95 &
+  abs(info.indvCC$hetF) < 0.1 &     # or info.inv$Heterozygosity < 0.32
+  !sex.discrepCC &
+  !rownames(info.indvCC)%in%ids.rel.CC
+mask.indiv.CC <- use.CC & !is.na(use.CC)
+genotype.qc.CC <- genotype.qc.snpsCC[mask.indiv.CC, ]
+
+
+phenotype.qc.CC <- colorectal.phenotype[mask.indiv.CC, ]
+identical(rownames(phenotype.qc.CC), rownames(genotype.qc.CC))
+
+dim(colorectal.phenotype) # nº individus inicials
+dim(phenotype.qc.CC) # nº individus filtrats
+```
+From `r nrow(phenotype)`(2312) individuals, we kept `r nrow(phenotype.qc)`(2242). As before, we should report the individuals removed.
+
+```{r ind-quality-report}
+# Number of individuals removed to bad call rate
+sum(info.indvCC$Call.rate < 0.95)
+
+# Number of individuals removed for heterozygosity problems 
+sum(abs(info.indvCC$hetF)>0.1)
+
+# Number of individuals removed for sex discrepancies
+sum(sex.discrepCC)
+
+# Number of individuals removed to be related with others
+length(ids.rel.CC)
+
+# The total number of individuals that do not pass QC
+sum(!mask.indiv.CC)
+```
+
+
+### 4. Genome-wide association analysis
+
+Genome-wide association analysis involves regressing each SNP separately on our trait of interest. The analyses should be adjusted for clinical, environmental, and/or demographic factors as well as ancestral differences between the subjects. The analysis can be performed with a range of functions of the `snpStats` package.
+
+We first examine the unadjusted whole genome association of our colorectal cancer study:
+
+```{r gwas}
+# Perform a GWAS
+gwas.CC <- single.snp.tests(bmi, data = phenotype.qc.CC,
+                         snp.data=genotype.qc.CC)
+
+# Create a dataframe with the results 
+gwasStats.CC <- data.frame(SNP=annotationCC$snp.name, 
+                   CHR=annotationCC$chromosome,
+                   BP=annotationCC$position,
+                   P=p.value(gwas.CC, 1))
+        # P=p.value(gwas.quant)) or gwas.adj if snp.rh.tests is used
+
+
+gwasStats.CC <- subset(gwasStats.CC, !is.na(CHR) & !is.na(P) & CHR!=24 & CHR!=25)
+
+head(gwasStats.CC)
+```
+
+This `data.frame` is what we call the GWAS summary statistic file. It should have the following columns: the chromosome (in the `CHR` column), the position of the SNP on the chromosome (in the column `BP`), the p-value (in a column called `P`), and the SNP name (in a column named `SNP`).
+
+We can adjust the analysis by some covariates, for example, the smoking status of the subjects (note that the function is different, `snp.rhs.tests`):
+
+<i class="fa fa-info-circle"></i> A quantitative trait can also be analyzed setting the argument family equal to Gaussian.
+
+```{r adjusted}
+# Example of a GWAS adjusting by smoke
+#gwas.adj <- snp.rhs.tests(obese ~ smoke,  data = phenotype.qc,
+                        # snp.data=genotype.qc, family = "Gaussian")
+
+# Example with a quantitative trait (age)
+gwas.adj.CC <- snp.rhs.tests(age ~ 1,  data = phenotype.qc.CC,
+                         snp.data=genotype.qc.CC, family = "Gaussian")
+
+gwas.adj.Stats.CC <- data.frame(SNP=annotationCC$snp.name, 
+                   CHR=annotationCC$chromosome,
+                   BP=annotationCC$position,
+                   P=p.value(gwas.adj.CC))
+                   
+gwas.adj.Stats.CC <- subset(gwas.adj.Stats.CC, !is.na(CHR) & !is.na(P) & CHR!=24 & CHR!=25)
+
+head(gwas.adj.Stats.CC)
+```
+### 5. Post-GWAS visualization and interpretation
+
+### Manhattan plot: summarizing genome-wide association data 
+This type of plot has a point for every SNP or location tested with the position in the genome along the `x`-axis and the -log<sub>10</sub> p-value on the `y`-axis. 
+
+we can write our code in `ggplot2` to create a Manhattan plot.
+
+```{r gwasStats}
+head(gwasStats.CC)
+```
+
+### Preparing the data
+
+Since the only columns we have indicating position are the chromosome number and the base pair position of the SNP on that chromosome, we want to combine those so that we have one column with position that we can use for the `x`-axis. So, what we want to do is to create a column with **cumulative base pair position** in a way that puts the SNPs on the first chromosome first, and the SNPs on chromosome 22 last. 
+
+```{r calculate-cumulative-bp}
+# Run it
+nCHR.CC <- length(unique(gwasStats.CC$CHR))
+gwasStats.CC$BPcum <- NA
+s.CC <- 0
+nbp.CC <- c()
+for (i in unique(gwasStats.CC$CHR)){
+  nbp.CC[i] <- max(gwasStats.CC[gwasStats.CC$CHR == i,]$BP)
+  gwasStats.CC[gwasStats.CC$CHR == i,"BPcum"] <- gwasStats.CC[gwasStats.CC$CHR == i,"BP"] + s.CC
+  s.CC <- s.CC + nbp.CC[i]
+}
+```
+
+We want the centre position of each chromosome. This position we’ll use later to place the labels on the `x`-axis of the Manhattan plot neatly in the middle of each chromosome. 
+
+```{r center-position}
+# Get chromosome center positions for x-axis
+axisdf.CC <- gwasStats.CC %>%
+            group_by(CHR) %>%
+              summarize(center=(max(BPcum) + min(BPcum))/2)
+```
+
+Here, we choose to get a Bonferroni-corrected threshold, which is 0.05 divided by the number of SNPs in the summary statistics. 
+
+```{r threshold}
+# Bonferroni-corrected threshold
+significance.CC <- 1e-04
+genomewideline.CC <- 5e-08
+```
+
+### Visualize the data
+
+Each SNP will be one point on the plot. Therefore, we map in the `x`-axis the relative base pair position we calculated earlier (`BPcum`) and the -lo<sub>g10</sub> P-value in the `y`-axis (`-log10(P)`). Each SNP will be colored based on the chromosome (`CHR`).
+
+```{r}
+manhattanPlot.CC <- ggplot(gwasStats.CC, aes(x = BPcum, y = -log10(P))) +
+  geom_point(aes(color=as.factor(CHR)))
+ manhattanPlot.CC
+```
+
+#### Improving the Manhattan plot
+1. Add a custom `x`-axis with the name of the chromosomes (e.g. 1, 2, ...). For that, we use the `scale_x_continous` function, indicating in the `label` the name of the chromosome (`CHR`), and in the `breaks` the center point (`center`) we calculated earlier in the `axisdf` object.
+2. Add a title and change the x and y axis titles
+3. Add a genome-wide significant line using the significance calculated before
+4. Customize the theme. For example, you can remove the grid or the legend.
+5. Add a custom palette. We can use a custom palette (`mypalette`). For that, we have to use the `scale_color_manual` function, because we will manually set the colours. Because the palette has 5 colours but we have 22 chromosmes, we are going to use simple R syntax to repeat the palette.
+6. annotate the name of the significant SNPs. For that we can use the `geom_label_repel` function from the `ggrepel` library.
+
+```{r eval=F}
+
+manhattanPlot.CC <- manhattanPlot.CC +
+  #modificar l'eix de les X
+  scale_x_continuous(label = axisdf.CC$CHR, breaks= axisdf.CC$center) + 
+  #posar nom a l'eix de les X i títol
+  labs(title= "GWAS of Colorectal Cancer", x = "Chromosome") +
+  #posar una línia de punts gris (dashed) per marcar la línia de significancia (valor descrit abans)
+  geom_hline(yintercept = -log10(significance.CC), color = "grey20", linetype = "dashed")+
+  #posar fons blanc
+  theme_classic() + 
+  #treure la llegenda i canviar la mida de la lletra
+  theme(legend.position="none",
+        axis.title = element_text(size = 16), axis.text = element_text(size = 14), title = element_text(size = 18)) +
+  #paleta de colors per al Manhattan plot
+  scale_color_manual(values = rep(c("#E4CDFF", "#B19CD9", "#816EA7", "#CCA7EC", "#BE94E6"), length(unique(gwasStats.CC$CHR)))) +
+  #posar el nom de les variats que estan per sobre de la linia de significancia
+  geom_label_repel(data=gwasStats.CC[gwasStats.CC$P<significance.CC,], aes(label=as.factor(SNP), alpha=0.7), size=5, force=1.6)
+
+#resem perquè surti el Manhattan plot
+manhattanPlot.CC
+#surt!
+
+```
+
+
+**Which SNPs are significant in this GWAS analysis?**
+
+<div style="background-color:#F0F0F0">
+##### &emsp;<i class="fas fa-comment-dots"></i> Answer: rs2290753, rs11674328, rs1890668, rs786319, rs1550051, rs7905846, rs10083549, rs8080301, rs926331
+
+</div>
+
+### <i class="fa fa-cogs"></i> Locus Zoom
+
+We can also visualize the GWAS results using [LocusZoom](http://locuszoom.org/genform.php?type=yourdata).
+
+For that, we need to save the `gwasStats` data.frame into a file:
+
+```{r save-data}
+write.table(gwasStats.CC, file="gwasStats_CC.txt", quote = FALSE, row.names = FALSE, sep = "\t")
+```
+**Are these SNPs overlapping protein-coding genes?**
+
+<div style="background-color:#F0F0F0">
+##### &emsp;<i class="fas fa-comment-dots"></i> Answer: 
+rs2290753: AKT3
+rs11674328: HECW2
+rs1890668: NO
+rs786319: PRUNE2
+rs1550051: NO
+rs7905846: NO
+rs10083549: GABRG3
+rs8080301: RAP1GAP2
+rs926331: NO
+
+
+
+
+
+
