@@ -785,7 +785,7 @@ table(naData)
 
 ```
 ```
-Respuesta: En nuestro caso debemos eliminar 77 muestras porque no tienen un stage determinado
+Respuesta: En nuestro caso debemos eliminar 189 muestras porque no tienen un stage determinado
 ```
 As we can see, all patients have information because all the results are `FALSE` when we check if something "_is na?_". But if we are dealing with some `TRUE` results (i.e., there's no data for some patients), we can remove it as:
 
@@ -798,7 +798,7 @@ rse_gene <- rse_gene[, !naData]
 dim(rse_gene)
 ```
 ``` 
-Respuesta: Hemos tenido que eliminar 77, aun así seguimos teniendo 266 
+Respuesta: Hemos tenido que eliminar 189 de los 266, aun así seguimos teniendo 77
 ```
 
 We can summarize individuals in each category as "early" and "late" using the `table()` function. We can see that there are more than two times patients in the late stage than in the early stage.
@@ -840,6 +840,7 @@ individualsCommon <- intersect(colnames(counts),rownames(phenotype))
 counts <- counts[, individualsCommon]
 # filter the phenotype dataset to keep only the individuals in the vector
 phenotype <- phenotype[individualsCommon ,]
+length(individualsCommon)
 ```
 
 In this case, we still have the `r length(individualsCommon)` individuals.
@@ -853,7 +854,9 @@ length(annotation$gene_id)
 annotation[1:2,]
 ```
 
-
+```{r}
+length(annotation$gene_id) 
+````
 
 <i class="fa fa-circle"></i> **There is all the information is available for each gene** **Short summary of the information you have available (e.g., total number of individuals, filtered individuals, individuals by stage, number of genes, ...)**
 
@@ -1000,9 +1003,6 @@ The `plotMA` function allows the graphical representation of the log<sub>2</sub>
 plotMA(res, ylim=c(-20,20), main= 'Differentially expressed genes\nin early vs late Adrenal gland cancer')
 ```
 
-```{r visualization}
-graphic + ggtitle('Differentially expressed genes in early vs late Adrenal gland cancer') + )
-```
 With this analysis it is possible to find the genes that are significanlty overexpressed or underexpressed in late tumours. We will apply the following filters:
 
 1. Keep genes whose adjusted p-value is lower than 0.001 
@@ -1034,7 +1034,7 @@ Cuando representamos solamente los genes expresados diferencialmente tenemos dos
 
 | Underexpressed | Not differentially expressed | Overexpressed |
 |----------------|------------------------------|---------------|
-|      29        |               2              |      14       |
+|      29        |             54561            |      14       |
 
 </div>
 
@@ -1075,21 +1075,19 @@ labs(title = "Adrenal gland cancer RNA-seq analysis", subtitle = "Volcano plot" 
 
 head(resDF)
 ggplot(data = resDF, mapping = aes(x = log2FoldChange, y = -log(padj), colour = filter)) +  geom_point()+
-theme_bw(base_size=8) + scale_color_manual (values = c("#999999","#E69F00","#56B4E9","#009E73", "#F0E442","#0072B2","#D55E00","#CC79A7")) + labs(title = "Adrenal gland cancer RNA-seq analysis", subtitle = "Volcano plot" , x = "log2(fold-change)", y = "-log10(adjusted p-value)")
+theme_bw(base_size=8) + scale_color_manual (values = c("#000000","#E69F00","#56B4E9","#009E73", "#F0E442","#0072B2","#D55E00","#CC79A7")) + labs(title = "Adrenal gland cancer RNA-seq analysis", subtitle = "Volcano plot" , x = "log2(fold-change)", y = "-log10(adjusted p-value)")
 
 ```
 
 3. One finally thing we can do is to annotate the name of the DE genes. For that we can use the `geom_label_repel()` function from the `ggrepel` library.
 
 ```{r ggplot3}
-#COMO NOS DA ERROR HEMOS DECIDIDO AUMENTAR LOS OVERLAPS
-options(ggrepel.max.overlaps = Inf)
 head(resDF)
 plot <- ggplot(data = resDF, mapping = aes(x = log2FoldChange, y = -log(padj), colour = filter)) +  geom_point()+   
 theme_bw(base_size=8) + scale_fill_viridis_d() +
 labs(title = "Adrenal gland cancer RNA-seq analysis", subtitle = "Volcano plot" , x = "log2(fold-change)", y = "-log10(adjusted p-value)")
 
-annotatedplot <- plot +theme(legend.position = "none")+ geom_label_repel(data=resDF[abs(resDF$log2FoldChange) > log2(10) & resDF$padj < 0.001 ,], aes(label = as.factor(gene)), alpha = 0.7, size = 5, force = 1.3)  
+annotatedplot <- plot +theme(legend.position = "none")+ geom_label_repel(data=resDF[abs(resDF$log2FoldChange) > log2(10) & resDF$padj < 0.0001 ,], aes(label = as.factor(gene)), alpha = 0.6, size = 3, force = 1.1)  
 
 ggsave(filename = "DEgenesannotated.png", plot = annotatedplot, width = 6, height = 4) 
 #EN R NO SE NOS MUESTRA PERO EN NUESTRO ORDENADOR SI QUE SE CREA LA IMAGEN
@@ -1112,6 +1110,7 @@ The first step is to find some information of the differentially expressed genes
 deGenes <- gsub("\\..*", "",rownames(res.padj_4fold))
 head(deGenes)
 ```
+
 
 The first step to  use the `biomaRt` package is to selct a database and a dataset. For that we use the `useMart` function. We will use as database the `ensembl` and as a dataset the `hsapiens_gene_ensembl`.
 
@@ -1217,7 +1216,7 @@ ggplot(data = GOanalysis, mapping = aes(x = Count, y = Term)) + geom_col(aes(fil
 
 <div style="background-color:#F0F0F0">
 ##### &emsp;<i class="fas fa-comment-dots"></i> Answer:
-La glándula adrenal debe responder a estimulos y quimicos para poder producir bajo demanda del organismo las hormonas esteroides y ademas de la producción de neurotransmisores como la adrenalina y noradrenalina.Ptros procesos que vemos que son altamente significativos son los procesos metabólicos de diferentes productos quimicos.
+La glándula adrenal debe responder a estímulos y químicos para poder producir bajo demanda del organismo las hormonas esteroides y ademas de la producción de neurotransmisores como la adrenalina y noradrenalina.otros procesos que vemos que son altamente significativos son los procesos metabólicos de diferentes productos quimicos.
 </div>
 
 <div style="background-color: #86CBBB; 1px; height:3px " ></div>
